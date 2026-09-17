@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Consulta de Reposição de Estoque</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card-bg: #ffffff;
+    --border: #e2e4e9;
+    --text: #1a1d23;
+    --text-muted: #6b7280;
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --row-alt: #fafbfc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  .container {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--text-muted);
+  }
+  select {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text);
+  }
+  select:disabled {
+    opacity: 0.6;
+  }
+  .status {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 10px;
+    min-height: 18px;
+  }
+  .status.error { color: #dc2626; }
+  .status.ok { color: #16a34a; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+  tr:nth-child(even) td { background: var(--row-alt); }
+  .qty {
+    font-weight: 600;
+    color: var(--accent);
+    text-align: right;
+  }
+  .empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 30px 0;
+    font-size: 14px;
+  }
+  .refresh-note {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .count-badge {
+    display: inline-block;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+  }
+  .copy-btn {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: #eff4ff;
+    border: 1px solid #dbe6ff;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+  .copy-btn:hover {
+    background: #e2ebff;
+  }
+  .copy-btn.copied {
+    color: #16a34a;
+    background: #eafaf0;
+    border-color: #cdf0d9;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Consulta de Reposição de Estoque</h1>
+  <div class="subtitle">Dados lidos em tempo real da planilha "Visão Geral"</div>
+
+  <div class="card">
+    <label for="fornecedor">Fornecedor</label>
+    <select id="fornecedor" disabled>
+      <option>Carregando fornecedores...</option>
+    </select>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+      <div id="countBadge" class="count-badge" style="margin-bottom:0;"></div>
+      <button id="copyBtn" class="copy-btn" style="display:none;">Copiar</button>
+    </div>
+    <table id="resultTable" style="display:none;">
+      <thead>
+        <tr>
+          <th>SKU</th>
+          <th style="text-align:right;">Quantidade</th>
+        </tr>
+      </thead>
+      <tbody id="resultBody"></tbody>
+    </table>
+    <div id="emptyState" class="empty">Selecione um fornecedor para ver os resultados.</div>
+  </div>
+
+  <div class="card" id="zeroCard" style="display:none;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+      <div style="font-size:13px; font-weight:600; color:var(--text-muted);">
+        Sem estoque a um tempo
+      </div>
+      <button id="copyZeroBtn" class="copy-btn">Copiar</button>
+    </div>
+    <table id="zeroTable">
+      <thead>
+        <tr>
+          <th>SKU</th>
+        </tr>
+      </thead>
+      <tbody id="zeroBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  // ---- Configuração da planilha ----
+  const SHEET_ID = "1404SCPiabg6abXRphpHqGXQ0frRkIlUptDV9m8a-x3w";
+  const GID = "270508635";
+  const GVIZ_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${GID}`;
+
+  // Índices das colunas conforme o cabeçalho da planilha (0-based, incluindo a coluna A vazia)
+  const COL = {
+    FORNECEDOR: 1,       // B
+    SKU: 2,               // C
+    ESTOQUE_ANYMARKET: 5, // F
+    ULT_7_DIAS: 7,         // H
+    ULT_30_DIAS: 8,        // I
+    INATIVO: 15,           // P
+    CLASSIFICACAO: 18,     // S
+  };
+
+  const fornecedorSelect = document.getElementById("fornecedor");
+  const statusEl = document.getElementById("status");
+  const resultTable = document.getElementById("resultTable");
+  const resultBody = document.getElementById("resultBody");
+  const emptyState = document.getElementById("emptyState");
+  const countBadge = document.getElementById("countBadge");
+  const zeroCard = document.getElementById("zeroCard");
+  const zeroBody = document.getElementById("zeroBody");
+  const copyBtn = document.getElementById("copyBtn");
+  const copyZeroBtn = document.getElementById("copyZeroBtn");
+
+  let ultimosResultados = [];
+  let ultimosSemEstoque = [];
+
+  function copiarTexto(texto, botao) {
+    navigator.clipboard.writeText(texto).then(() => {
+      const original = botao.textContent;
+      botao.textContent = "Copiado!";
+      botao.classList.add("copied");
+      setTimeout(() => {
+        botao.textContent = original;
+        botao.classList.remove("copied");
+      }, 1500);
+    }).catch(() => {
+      alert("Não foi possível copiar automaticamente. Selecione o texto manualmente.");
+    });
+  }
+
+  copyBtn.addEventListener("click", () => {
+    const texto = ultimosResultados
+      .map((item) => `${item.sku} - ${item.quantidade.toLocaleString("pt-BR")}`)
+      .join("\n");
+    copiarTexto(texto, copyBtn);
+  });
+
+  copyZeroBtn.addEventListener("click", () => {
+    const texto = ultimosSemEstoque.map((item) => item.sku).join("\n");
+    copiarTexto(texto, copyZeroBtn);
+  });
+
+  let cachedRows = null; // guarda os dados da última leitura da planilha
+
+  function setStatus(msg, type) {
+    statusEl.textContent = msg;
+    statusEl.className = "status" + (type ? " " + type : "");
+  }
+
+  // Busca a planilha via JSONP (contorna CORS, funciona em GitHub Pages).
+  // O endpoint gviz do Google sempre chama google.visualization.Query.setResponse,
+  // então interceptamos essa função global em vez de depender do parâmetro responseHandler.
+  function fetchSheet() {
+    return new Promise((resolve, reject) => {
+      if (!window.google) window.google = {};
+      if (!window.google.visualization) window.google.visualization = {};
+
+      window.google.visualization.Query = {
+        setResponse: function (response) {
+          script.remove();
+          if (!response || response.status === "error") {
+            reject(new Error("Erro ao ler a planilha."));
+            return;
+          }
+          resolve(response.table);
+        },
+      };
+
+      const script = document.createElement("script");
+      script.src = GVIZ_URL + `&_=${Date.now()}`;
+      script.onerror = () => reject(new Error("Não foi possível carregar a planilha."));
+      document.body.appendChild(script);
+
+      setTimeout(() => {
+        reject(new Error("Tempo de resposta esgotado ao ler a planilha."));
+      }, 15000);
+    });
+  }
+
+  function cellValue(row, index) {
+    const cell = row.c[index];
+    if (!cell) return null;
+    return cell.v;
+  }
+
+  function normalizeClassificacao(raw) {
+    if (raw === null || raw === undefined) return "-";
+    const val = String(raw).trim();
+    return val === "" ? "-" : val;
+  }
+
+  // Aplica as regras de negócio para calcular a quantidade
+  function calcularQuantidade(classificacao, ultimos7, ultimos30, estoqueAnymarket) {
+    const u7 = Number(ultimos7) || 0;
+    const u30 = Number(ultimos30) || 0;
+    const estoque = Number(estoqueAnymarket) || 0;
+
+    switch (classificacao) {
+      case "Premium":
+        return (u7 * 2) - estoque;
+      case "Estrela":
+        return u30 - estoque;
+      case "Potencial":
+      case "Análise":
+      case "Volume":
+      case "-":
+      default:
+        return u7 - estoque;
+    }
+  }
+
+  function popularFornecedores(rows) {
+    const fornecedores = new Set();
+    rows.forEach((row) => {
+      const f = cellValue(row, COL.FORNECEDOR);
+      if (f && String(f).trim() !== "") fornecedores.add(String(f).trim());
+    });
+
+    const listaOrdenada = Array.from(fornecedores).sort((a, b) => a.localeCompare(b, "pt-BR"));
+
+    fornecedorSelect.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Selecione um fornecedor";
+    fornecedorSelect.appendChild(placeholder);
+
+    listaOrdenada.forEach((nome) => {
+      const opt = document.createElement("option");
+      opt.value = nome;
+      opt.textContent = nome;
+      fornecedorSelect.appendChild(opt);
+    });
+
+    fornecedorSelect.disabled = false;
+  }
+
+  function renderResultados(rows, fornecedorSelecionado) {
+    const resultados = [];
+    const semEstoque = [];
+
+    rows.forEach((row) => {
+      const fornecedor = cellValue(row, COL.FORNECEDOR);
+      if (!fornecedor || String(fornecedor).trim() !== fornecedorSelecionado) return;
+
+      const sku = cellValue(row, COL.SKU);
+      if (!sku || String(sku).trim() === "") return;
+
+      const inativo = cellValue(row, COL.INATIVO);
+      const isInativo = inativo === true || String(inativo).trim().toUpperCase() === "TRUE";
+      if (isInativo) return;
+
+      const estoqueAnymarket = cellValue(row, COL.ESTOQUE_ANYMARKET);
+      const ultimos7 = cellValue(row, COL.ULT_7_DIAS);
+      const ultimos30 = cellValue(row, COL.ULT_30_DIAS);
+      const classificacao = normalizeClassificacao(cellValue(row, COL.CLASSIFICACAO));
+
+      const quantidade = calcularQuantidade(classificacao, ultimos7, ultimos30, estoqueAnymarket);
+      const quantidadeArredondada = Math.round(quantidade);
+
+      if (quantidadeArredondada > 0) {
+        resultados.push({ sku: String(sku).trim(), quantidade: quantidadeArredondada });
+      } else if (quantidadeArredondada === 0) {
+        semEstoque.push({ sku: String(sku).trim() });
+      }
+    });
+
+    resultados.sort((a, b) => b.quantidade - a.quantidade);
+    ultimosResultados = resultados;
+
+    resultBody.innerHTML = "";
+
+    if (resultados.length === 0) {
+      resultTable.style.display = "none";
+      emptyState.style.display = "block";
+      emptyState.textContent = "Nenhum SKU com quantidade a repor para este fornecedor.";
+      countBadge.textContent = "";
+      copyBtn.style.display = "none";
+    } else {
+      resultados.forEach((item) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${item.sku}</td><td class="qty">${item.quantidade.toLocaleString("pt-BR")}</td>`;
+        resultBody.appendChild(tr);
+      });
+
+      resultTable.style.display = "table";
+      emptyState.style.display = "none";
+      countBadge.textContent = `${resultados.length} SKU(s) encontrado(s)`;
+      copyBtn.style.display = "inline-block";
+    }
+
+    // Lista separada: SKUs com quantidade calculada exatamente igual a 0
+    ultimosSemEstoque = semEstoque;
+    zeroBody.innerHTML = "";
+    if (semEstoque.length === 0) {
+      zeroCard.style.display = "none";
+    } else {
+      semEstoque
+        .sort((a, b) => a.sku.localeCompare(b.sku, "pt-BR"))
+        .forEach((item) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${item.sku}</td>`;
+          zeroBody.appendChild(tr);
+        });
+      zeroCard.style.display = "block";
+    }
+  }
+
+  async function carregarPlanilhaInicial() {
+    setStatus("Carregando fornecedores...");
+    try {
+      const table = await fetchSheet();
+      cachedRows = table.rows;
+      popularFornecedores(cachedRows);
+      setStatus("Dados carregados. Selecione um fornecedor.", "ok");
+    } catch (err) {
+      setStatus("Erro: " + err.message, "error");
+      fornecedorSelect.innerHTML = "<option>Erro ao carregar</option>";
+    }
+  }
+
+  async function aoSelecionarFornecedor() {
+    const fornecedor = fornecedorSelect.value;
+    if (!fornecedor) {
+      resultTable.style.display = "none";
+      emptyState.style.display = "block";
+      emptyState.textContent = "Selecione um fornecedor para ver os resultados.";
+      countBadge.textContent = "";
+      copyBtn.style.display = "none";
+      zeroCard.style.display = "none";
+      return;
+    }
+
+    setStatus("Buscando dados atualizados na planilha...");
+    try {
+      // Busca em tempo real a cada seleção, garantindo dados sempre atuais
+      const table = await fetchSheet();
+      cachedRows = table.rows;
+      renderResultados(cachedRows, fornecedor);
+      setStatus("Atualizado agora.", "ok");
+    } catch (err) {
+      setStatus("Erro ao atualizar: " + err.message + " (mostrando último dado disponível)", "error");
+      if (cachedRows) renderResultados(cachedRows, fornecedor);
+    }
+  }
+
+  fornecedorSelect.addEventListener("change", aoSelecionarFornecedor);
+
+  carregarPlanilhaInicial();
+</script>
+</body>
+</html>
