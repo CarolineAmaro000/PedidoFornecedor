@@ -424,9 +424,12 @@
       const quantidade = calcularQuantidade(classificacao, ultimos7, ultimos30, estoqueAnymarket, modoSelecionado);
       const quantidadeArredondada = Math.round(quantidade);
 
-      if (quantidadeArredondada > 0) {
+      // Entram na lista principal os SKUs com quantidade maior ou igual a 0
+      if (quantidadeArredondada >= 0) {
         resultados.push({ sku: String(sku).trim(), quantidade: quantidadeArredondada });
-      } else if (quantidadeArredondada === 0) {
+      }
+      // Os que deram exatamente 0 continuam aparecendo também na lista separada
+      if (quantidadeArredondada === 0) {
         semEstoque.push({ sku: String(sku).trim() });
       }
     });
