@@ -362,8 +362,9 @@
   }
 
   function atualizarEstadoSelect() {
-    // O fornecedor só pode ser escolhido depois da frequência e com os dados carregados
-    fornecedorSelect.disabled = !(dadosCarregados && modoSelecionado);
+    // O fornecedor fica liberado assim que a planilha carrega.
+    // Se ainda não houver frequência escolhida, o cálculo espera o clique no botão.
+    fornecedorSelect.disabled = !dadosCarregados;
   }
 
   function popularFornecedores(rows) {
@@ -424,13 +425,19 @@
       const quantidade = calcularQuantidade(classificacao, ultimos7, ultimos30, estoqueAnymarket, modoSelecionado);
       const quantidadeArredondada = Math.round(quantidade);
 
-      // Entram na lista principal os SKUs com quantidade maior ou igual a 0
-      if (quantidadeArredondada >= 0) {
+      const temEstoqueAny = (Number(estoqueAnymarket) || 0) > 0;
+
+      if (quantidadeArredondada > 0) {
+        // Precisa pedir
         resultados.push({ sku: String(sku).trim(), quantidade: quantidadeArredondada });
-      }
-      // Os que deram exatamente 0 continuam aparecendo também na lista separada
-      if (quantidadeArredondada === 0) {
-        semEstoque.push({ sku: String(sku).trim() });
+      } else if (quantidadeArredondada === 0) {
+        if (temEstoqueAny) {
+          // Conta deu 0 e há estoque no Anymarket: entra junto com o pedido
+          resultados.push({ sku: String(sku).trim(), quantidade: 0 });
+        } else {
+          // Conta deu 0 e o Anymarket está zerado: sem estoque há um tempo
+          semEstoque.push({ sku: String(sku).trim() });
+        }
       }
     });
 
@@ -496,7 +503,8 @@
   async function aoSelecionarFornecedor() {
     const fornecedor = fornecedorSelect.value;
     if (!modoSelecionado) {
-      limparResultados("Escolha a frequência e depois o fornecedor para ver os resultados.");
+      limparResultados("Agora escolha a frequência de reposição (1 ou 3 vezes por semana).");
+      setStatus("Escolha a frequência de reposição para calcular.", "error");
       return;
     }
     if (!fornecedor) {
