@@ -44,7 +44,7 @@
     padding: 20px;
     margin-bottom: 16px;
   }
-  label {
+  label, .field-label {
     display: block;
     font-size: 13px;
     font-weight: 600;
@@ -63,6 +63,45 @@
   select:disabled {
     opacity: 0.6;
   }
+
+  /* ---- Botões de frequência ---- */
+  .mode-group {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .mode-btn {
+    padding: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: center;
+  }
+  .mode-btn:hover {
+    border-color: var(--accent);
+  }
+  .mode-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .mode-btn.active {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .mode-btn .mode-desc {
+    display: block;
+    font-size: 12px;
+    font-weight: 400;
+    margin-top: 4px;
+    opacity: 0.8;
+  }
+
   .status {
     font-size: 13px;
     color: var(--text-muted);
@@ -100,11 +139,6 @@
     padding: 30px 0;
     font-size: 14px;
   }
-  .refresh-note {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin-top: 4px;
-  }
   .count-badge {
     display: inline-block;
     font-size: 12px;
@@ -137,6 +171,18 @@
   <div class="subtitle">Dados lidos em tempo real da planilha "Visão Geral"</div>
 
   <div class="card">
+    <span class="field-label">Frequência de reposição</span>
+    <div class="mode-group" role="group" aria-label="Frequência de reposição">
+      <button type="button" class="mode-btn" data-modo="1x" aria-pressed="false">
+        1 vez por semana
+        <span class="mode-desc">Estrela usa os últimos 30 dias</span>
+      </button>
+      <button type="button" class="mode-btn" data-modo="3x" aria-pressed="false">
+        3 vezes por semana
+        <span class="mode-desc">Estrela usa 7 dias × 2</span>
+      </button>
+    </div>
+
     <label for="fornecedor">Fornecedor</label>
     <select id="fornecedor" disabled>
       <option>Carregando fornecedores...</option>
@@ -158,7 +204,7 @@
       </thead>
       <tbody id="resultBody"></tbody>
     </table>
-    <div id="emptyState" class="empty">Selecione um fornecedor para ver os resultados.</div>
+    <div id="emptyState" class="empty">Escolha a frequência e depois o fornecedor para ver os resultados.</div>
   </div>
 
   <div class="card" id="zeroCard" style="display:none;">
@@ -196,6 +242,11 @@
     CLASSIFICACAO: 18,     // S
   };
 
+  const NOMES_MODO = {
+    "1x": "1 vez por semana",
+    "3x": "3 vezes por semana",
+  };
+
   const fornecedorSelect = document.getElementById("fornecedor");
   const statusEl = document.getElementById("status");
   const resultTable = document.getElementById("resultTable");
@@ -206,9 +257,13 @@
   const zeroBody = document.getElementById("zeroBody");
   const copyBtn = document.getElementById("copyBtn");
   const copyZeroBtn = document.getElementById("copyZeroBtn");
+  const modeButtons = document.querySelectorAll(".mode-btn");
 
   let ultimosResultados = [];
   let ultimosSemEstoque = [];
+  let modoSelecionado = null;   // "1x" ou "3x"
+  let dadosCarregados = false;
+  let cachedRows = null;        // guarda os dados da última leitura da planilha
 
   function copiarTexto(texto, botao) {
     navigator.clipboard.writeText(texto).then(() => {
@@ -235,8 +290,6 @@
     const texto = ultimosSemEstoque.map((item) => item.sku).join("\n");
     copiarTexto(texto, copyZeroBtn);
   });
-
-  let cachedRows = null; // guarda os dados da última leitura da planilha
 
   function setStatus(msg, type) {
     statusEl.textContent = msg;
@@ -285,8 +338,11 @@
     return val === "" ? "-" : val;
   }
 
-  // Aplica as regras de negócio para calcular a quantidade
-  function calcularQuantidade(classificacao, ultimos7, ultimos30, estoqueAnymarket) {
+  // Aplica as regras de negócio para calcular a quantidade.
+  // A única diferença entre os modos é a categoria Estrela:
+  //   1x por semana -> últimos 30 dias - estoque
+  //   3x por semana -> (últimos 7 dias × 2) - estoque (igual ao Premium)
+  function calcularQuantidade(classificacao, ultimos7, ultimos30, estoqueAnymarket, modo) {
     const u7 = Number(ultimos7) || 0;
     const u30 = Number(ultimos30) || 0;
     const estoque = Number(estoqueAnymarket) || 0;
@@ -295,7 +351,7 @@
       case "Premium":
         return (u7 * 2) - estoque;
       case "Estrela":
-        return u30 - estoque;
+        return modo === "3x" ? (u7 * 2) - estoque : u30 - estoque;
       case "Potencial":
       case "Análise":
       case "Volume":
@@ -303,6 +359,11 @@
       default:
         return u7 - estoque;
     }
+  }
+
+  function atualizarEstadoSelect() {
+    // O fornecedor só pode ser escolhido depois da frequência e com os dados carregados
+    fornecedorSelect.disabled = !(dadosCarregados && modoSelecionado);
   }
 
   function popularFornecedores(rows) {
@@ -327,7 +388,17 @@
       fornecedorSelect.appendChild(opt);
     });
 
-    fornecedorSelect.disabled = false;
+    dadosCarregados = true;
+    atualizarEstadoSelect();
+  }
+
+  function limparResultados(mensagem) {
+    resultTable.style.display = "none";
+    emptyState.style.display = "block";
+    emptyState.textContent = mensagem;
+    countBadge.textContent = "";
+    copyBtn.style.display = "none";
+    zeroCard.style.display = "none";
   }
 
   function renderResultados(rows, fornecedorSelecionado) {
@@ -350,7 +421,7 @@
       const ultimos30 = cellValue(row, COL.ULT_30_DIAS);
       const classificacao = normalizeClassificacao(cellValue(row, COL.CLASSIFICACAO));
 
-      const quantidade = calcularQuantidade(classificacao, ultimos7, ultimos30, estoqueAnymarket);
+      const quantidade = calcularQuantidade(classificacao, ultimos7, ultimos30, estoqueAnymarket, modoSelecionado);
       const quantidadeArredondada = Math.round(quantidade);
 
       if (quantidadeArredondada > 0) {
@@ -380,7 +451,7 @@
 
       resultTable.style.display = "table";
       emptyState.style.display = "none";
-      countBadge.textContent = `${resultados.length} SKU(s) encontrado(s)`;
+      countBadge.textContent = `${resultados.length} SKU(s) encontrado(s) · ${NOMES_MODO[modoSelecionado]}`;
       copyBtn.style.display = "inline-block";
     }
 
@@ -407,7 +478,12 @@
       const table = await fetchSheet();
       cachedRows = table.rows;
       popularFornecedores(cachedRows);
-      setStatus("Dados carregados. Selecione um fornecedor.", "ok");
+      setStatus(
+        modoSelecionado
+          ? "Dados carregados. Selecione um fornecedor."
+          : "Dados carregados. Escolha a frequência de reposição.",
+        "ok"
+      );
     } catch (err) {
       setStatus("Erro: " + err.message, "error");
       fornecedorSelect.innerHTML = "<option>Erro ao carregar</option>";
@@ -416,13 +492,12 @@
 
   async function aoSelecionarFornecedor() {
     const fornecedor = fornecedorSelect.value;
+    if (!modoSelecionado) {
+      limparResultados("Escolha a frequência e depois o fornecedor para ver os resultados.");
+      return;
+    }
     if (!fornecedor) {
-      resultTable.style.display = "none";
-      emptyState.style.display = "block";
-      emptyState.textContent = "Selecione um fornecedor para ver os resultados.";
-      countBadge.textContent = "";
-      copyBtn.style.display = "none";
-      zeroCard.style.display = "none";
+      limparResultados("Selecione um fornecedor para ver os resultados.");
       return;
     }
 
@@ -438,6 +513,28 @@
       if (cachedRows) renderResultados(cachedRows, fornecedor);
     }
   }
+
+  function aoSelecionarModo(modo) {
+    modoSelecionado = modo;
+    modeButtons.forEach((btn) => {
+      const ativo = btn.dataset.modo === modo;
+      btn.classList.toggle("active", ativo);
+      btn.setAttribute("aria-pressed", ativo ? "true" : "false");
+    });
+    atualizarEstadoSelect();
+
+    if (fornecedorSelect.value) {
+      // Já havia um fornecedor escolhido: recalcula com a nova frequência
+      aoSelecionarFornecedor();
+    } else if (dadosCarregados) {
+      setStatus(`${NOMES_MODO[modo]} selecionado. Agora escolha o fornecedor.`, "ok");
+      limparResultados("Selecione um fornecedor para ver os resultados.");
+    }
+  }
+
+  modeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => aoSelecionarModo(btn.dataset.modo));
+  });
 
   fornecedorSelect.addEventListener("change", aoSelecionarFornecedor);
 
